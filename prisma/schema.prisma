@@ -1,0 +1,56 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+model User {
+  id Int @id @default(autoincrement())
+  username String @unique
+  email String @unique
+  password String
+  balance Int @default(0)
+  role Role @default(USER)
+}
+
+model Category {
+  id Int @id @default(autoincrement())
+  name String @unique
+  vouchers Voucher[]
+}
+
+model Voucher {
+  id Int @id @default(autoincrement())
+  voucherName String
+  nominal String 
+  price Int
+  stock Int
+  createdAt DateTime @default(now())
+
+  categoryId Int
+  category Category @relation(fields: [categoryId], references: [id])
+
+  @@unique([categoryId, nominal])
+  transaction Transaction[]
+}
+
+model Transaction {
+  id Int @id @default(autoincrement())
+  customerName String
+  voucherName String
+  quantity Int
+  totalCost Int
+  voucherCode String
+  createdAt DateTime @default(now())
+
+  voucherId Int
+  voucher Voucher @relation(fields: [voucherId], references: [id])
+}
