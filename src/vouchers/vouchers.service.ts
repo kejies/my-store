@@ -1,10 +1,11 @@
 import { PrismaService } from '../prisma/prisma.service.js';
 import { BadRequestException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { voucherProps } from '../interface/voucher.interface.js';
-
+import { PaymentService } from '../payment/payment.service.js';
+import { TransactionStatus } from '../../generated/prisma/enums.js';
 @Injectable()
 export class VouchersService {
-    constructor(private prisma: PrismaService){}
+    constructor(private prisma: PrismaService, private paymentService: PaymentService){}
 
     async createVoucher(voucherData: voucherProps) {
         const { voucherName, nominal, price, stock, categoryId } = voucherData;
@@ -75,47 +76,50 @@ export class VouchersService {
     }
 
     async buyVoucher(userId: number, voucherId: number, quantity: number) {
-        return await this.prisma.$transaction(async (tx) => {
-            const voucher = await tx.voucher.findUnique({ where: { id: voucherId } });
-            if (!voucher) throw new BadRequestException('Voucher tidak ditemukan!');
-            if (voucher.stock < quantity) throw new BadRequestException('Stock tidak cukup!');
+        const user = await this.prisma.user.findUnique({ where: { id: userId } });
+        const voucher = await this.prisma.voucher.findUnique({ where: {id: voucherId}});
 
-            const totalCost = voucher.price * quantity;
+        if (!user) throw new NotFoundException('User tidak ditemukan');
+        if(!voucher) throw new BadRequestException('Voucher tidak ditemukan!');
+        if(voucher.stock < quantity) throw new BadRequestException('Stock tidak cukup!');
 
-            const user = await tx.user.update({
-                where: { id: userId },
-                data: { balance: { decrement: totalCost } }
-            });
+        const totalCost = voucher.price * quantity;
+        const orderId = `INV-${Date.now()}`;
 
-            if (user.balance < 0) throw new BadRequestException('Saldo tidak cukup');
-
-            const updatedVoucher = await tx.voucher.update({
-                where: { id: voucherId },
-                data: { stock: { decrement: quantity } }
-            });
-            const codesVoucherArray: string[] = [];
-            for (let i = 0; i < quantity; i++) {
-                const code = `K-STORE-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
-                codesVoucherArray.push(code);
+        await this.prisma.transaction.create({
+            data: {
+                orderId: orderId,
+                userId: userId,
+                customerName: user.username,
+                quantity: quantity,
+                totalCost: totalCost,
+                voucherId: voucherId,
+                voucherName: voucher.voucherName,
+                status: TransactionStatus.PENDING
             }
-            const finalVoucherCodes = codesVoucherArray.join(', ');
-            const historyTransaction = await tx.transaction.create({
-                data: {
-                    customerName: user.username, 
-                    quantity: quantity,
-                    totalCost: totalCost,
-                    voucherId: voucherId,
-                    voucherName: voucher.voucherName,
-                    voucherCode: finalVoucherCodes
-                }
-            });
+        });
 
-            return { 
-                message: "Transaksi Berhasil!",
-                item: voucher.voucherName,
-                voucherCode: historyTransaction.voucherCode,
-                sisaSaldo: user.balance
-            };
-        })
-}
+        const payment = await this.paymentService.createTransaction(orderId, totalCost);
+        return  {
+            message: "Transaksi berhasil dibuat",
+            data: payment
+        };
+    }
+
+    async handleWebhook(payload: any) {
+        const { order_id, transaction_status } = payload;
+
+        if (transaction_status === 'settlement' || transaction_status === 'capture') {
+            return await this.paymentService.handlePaymentSuccess(order_id);
+        } 
+        
+        if (transaction_status === 'expire' || transaction_status === 'cancel' || transaction_status === 'deny') {
+            return await this.prisma.transaction.update({
+                where: { orderId: order_id },
+                data: { status: TransactionStatus.EXPIRED } 
+            });
+        }
+
+        return { status: 'OK', message: 'Transaksi sudah diproses' };
+    }
 }

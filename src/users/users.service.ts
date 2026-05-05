@@ -2,10 +2,12 @@ import { BadRequestException, Injectable, NotFoundException, UnauthorizedExcepti
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { registerProps } from '../interface/user.interface.js';
+import { TransactionStatus } from '../../generated/prisma/enums.js';
+import { PaymentService } from '../payment/payment.service.js';
 
 @Injectable()
 export class UsersService {
-    constructor(private prisma: PrismaService) {}
+    constructor(private prisma: PrismaService, private paymentService: PaymentService) {}
     async register(userData:registerProps) {
         const saltRounds = 10;
         const usernameExists = await this.prisma.user.findFirst({
@@ -48,14 +50,27 @@ export class UsersService {
     }
 
     async topUp(userId: number, amount: number) {
-        return await this.prisma.user.update({
-            where: { id: userId },
+        const user = await this.prisma.user.findUnique({ where: { id: userId } });
+        if (!user) throw new NotFoundException('User tidak ditemukan');
+
+        const orderId = `TOPUP-${Date.now()}-${userId}`;
+
+        await this.prisma.transaction.create({
             data: {
-                balance: {
-                    increment: amount
-                }
-            },
-            select: { username: true, balance: true }
-        })
+                orderId: orderId,
+                userId: userId,
+                customerName: user.username,
+                totalCost: amount,
+                quantity: 1,
+                status: TransactionStatus.PENDING,
+                voucherName: 'Top Up Saldo'            }
+        });
+
+        const payment = await this.paymentService.createTransaction(orderId, amount);
+
+        return {
+            message: "Silahkan selesaikan pembayaran top up",
+            data: payment
+        };
     }
 }

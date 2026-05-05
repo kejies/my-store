@@ -12,6 +12,13 @@ enum Role {
   ADMIN
 }
 
+enum TransactionStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  EXPIRED
+}
+
 model User {
   id Int @id @default(autoincrement())
   username String @unique
@@ -19,6 +26,8 @@ model User {
   password String
   balance Int @default(0)
   role Role @default(USER)
+
+  transactions Transaction[]
 }
 
 model Category {
@@ -43,14 +52,18 @@ model Voucher {
 }
 
 model Transaction {
-  id Int @id @default(autoincrement())
+  orderId      String            @id
   customerName String
-  voucherName String
-  quantity Int
-  totalCost Int
-  voucherCode String
-  createdAt DateTime @default(now())
+  voucherName  String
+  quantity     Int
+  totalCost    Int
+  voucherCode  String?           @db.Text 
+  status       TransactionStatus @default(PENDING)
+  createdAt    DateTime          @default(now())
 
-  voucherId Int
-  voucher Voucher @relation(fields: [voucherId], references: [id])
+  voucherId    Int?
+  voucher      Voucher?           @relation(fields: [voucherId], references: [id])
+  
+  userId       Int
+  user         User              @relation(fields: [userId], references: [id])
 }
