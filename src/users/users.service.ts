@@ -1,44 +1,11 @@
-import { BadRequestException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
-import * as bcrypt from 'bcrypt';
+import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { registerProps } from '../interface/user.interface.js';
 import { TransactionStatus } from '../../generated/prisma/enums.js';
 import { PaymentService } from '../payment/payment.service.js';
 
 @Injectable()
 export class UsersService {
     constructor(private prisma: PrismaService, private paymentService: PaymentService) {}
-    async register(userData:registerProps) {
-        const saltRounds = 10;
-        const usernameExists = await this.prisma.user.findFirst({
-                where: { username: userData.username }
-        });
-        const emailExists = await this.prisma.user.findFirst({
-                where: { email: userData.email }
-        });
-        if(usernameExists){
-            throw new BadRequestException('Username ini sudah terdaftar.')
-        }
-        if(emailExists){
-            throw new BadRequestException('Email ini sudah terdaftar.')
-        }
-
-        const hashedPassword = await bcrypt.hash(userData.password, saltRounds);
-        const newUser = await this.prisma.user.create({
-            data: {
-                username: userData.username,
-                email: userData.email,
-                password: hashedPassword,
-            },
-            select: {
-                id: true,
-                username: true,
-                email: true,
-            }
-        });
-        return newUser
-    }
-
     async findOneByUsername(username:string){
         const user = await this.prisma.user.findFirst({
             where: {username: username}
@@ -71,6 +38,45 @@ export class UsersService {
         return {
             message: "Silahkan selesaikan pembayaran top up",
             data: payment
+        };
+    }
+
+    async findOne(userId: number) {
+        const user = await this.prisma.user.findUnique({
+            where: { id: userId },
+            select: {
+                id: true,
+                username: true,
+                email: true,
+                balance: true,
+                role: true,
+            }
+        });
+        return user;
+    }
+
+    async getHistory(userId: number, page: number, limit: number) {
+        const skip = (page - 1) * limit;
+
+        const [transactions, total] = await this.prisma.$transaction([
+            this.prisma.transaction.findMany({
+                where: { userId: userId },
+                orderBy: { createdAt: 'desc' }, 
+                skip: skip,
+                take: limit,
+            }),
+            this.prisma.transaction.count({
+                where: { userId: userId },
+            }),
+        ]);
+
+        return {
+            data: transactions,
+            meta: {
+                total,
+                page,
+                lastPage: Math.ceil(total / limit),
+            },
         };
     }
 }
